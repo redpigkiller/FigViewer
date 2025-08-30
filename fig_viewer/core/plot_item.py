@@ -7,118 +7,11 @@ import pyqtgraph as pg
 from PyQt6 import QtCore
 from PyQt6.QtGui import QAction, QActionGroup
 from PyQt6.QtCore import QPointF, QTimer, Qt
-from PyQt6.QtWidgets import QMenu, QApplication, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QWidgetAction, QDoubleSpinBox, QLabel, QRadioButton, QButtonGroup
+from PyQt6.QtWidgets import QMenu, QApplication, QWidget, QHBoxLayout, QSlider, QVBoxLayout, QPushButton, QWidgetAction, QDoubleSpinBox, QLabel, QRadioButton, QButtonGroup
 
-from .custom_key_filter import KeyFilter
+from .key_filter import KeyFilter
 from .mark_spot import HintSpot, MarkSpots, AnchorDraggableTextItem, DataPoint
 from .mark_curve import HintCurve, MarkCurves
-
-
-class AxisMenu(QMenu):
-    def __init__(self, axis_name, parent_plot):
-        super().__init__(axis_name)
-        self.axis_name = axis_name
-        self.plot = parent_plot
-
-        # --- Manual 選項 ---
-        manual_widget = QWidget()
-        manual_layout = QHBoxLayout(manual_widget)
-        manual_layout.setContentsMargins(4, 2, 4, 2)
-
-        self.manual_radio = QRadioButton("Manual")
-        self.min_spin = QDoubleSpinBox()
-        self.max_spin = QDoubleSpinBox()
-        self.min_spin.setDecimals(3)
-        self.max_spin.setDecimals(3)
-        self.min_spin.setRange(-1e9, 1e9)
-        self.max_spin.setRange(-1e9, 1e9)
-        self.min_spin.setValue(0)
-        self.max_spin.setValue(10)
-
-        manual_layout.addWidget(self.manual_radio)
-        manual_layout.addWidget(QLabel("Min"))
-        manual_layout.addWidget(self.min_spin)
-        manual_layout.addWidget(QLabel("Max"))
-        manual_layout.addWidget(self.max_spin)
-
-        manual_action = QWidgetAction(self)
-        manual_action.setDefaultWidget(manual_widget)
-        self.addAction(manual_action)
-
-        # --- Auto 選項 ---
-        auto_widget = QWidget()
-        auto_layout = QHBoxLayout(auto_widget)
-        auto_layout.setContentsMargins(4, 2, 4, 2)
-
-        self.auto_radio = QRadioButton("Auto")
-        self.padding_spin = QDoubleSpinBox()
-        self.padding_spin.setDecimals(1)
-        self.padding_spin.setRange(0, 100)
-        self.padding_spin.setValue(10)
-        self.padding_spin.setSuffix("%")
-
-        auto_layout.addWidget(self.auto_radio)
-        auto_layout.addWidget(QLabel("Padding"))
-        auto_layout.addWidget(self.padding_spin)
-
-        auto_action = QWidgetAction(self)
-        auto_action.setDefaultWidget(auto_widget)
-        self.addAction(auto_action)
-
-        # --- 互斥組 ---
-        group = QButtonGroup(self)
-        group.addButton(self.manual_radio)
-        group.addButton(self.auto_radio)
-        self.auto_radio.setChecked(True)
-
-        # --- Inverse axis ---
-        inverse_action = QAction("Inverse axis", self)
-        inverse_action.setCheckable(True)
-        inverse_action.triggered.connect(self.toggle_inverse)
-        self.addAction(inverse_action)
-
-        # --- Log axis ---
-        log_action = QAction("Log axis", self)
-        log_action.setCheckable(True)
-        log_action.triggered.connect(self.toggle_log)
-        self.addAction(log_action)
-
-        # --- 信號連接 ---
-        self.manual_radio.toggled.connect(self.apply_manual)
-        self.auto_radio.toggled.connect(self.apply_auto)
-
-    def apply_manual(self, checked):
-        if checked:
-            min_val = self.min_spin.value()
-            max_val = self.max_spin.value()
-            if self.axis_name.lower().startswith("x"):
-                self.plot.setXRange(min_val, max_val)
-            else:
-                self.plot.setYRange(min_val, max_val)
-
-    def apply_auto(self, checked):
-        if checked:
-            padding = self.padding_spin.value() / 100
-            if self.axis_name.lower().startswith("x"):
-                self.plot.enableAutoRange(axis=pg.ViewBox.XAxis, enable=True)
-                self.plot.getViewBox().setRange(xRange=None, padding=padding)
-            else:
-                self.plot.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
-                self.plot.getViewBox().setRange(yRange=None, padding=padding)
-
-    def toggle_inverse(self, checked):
-        if self.axis_name.lower().startswith("x"):
-            self.plot.invertX(checked)
-        else:
-            self.plot.invertY(checked)
-
-    def toggle_log(self, checked):
-        if self.axis_name.lower().startswith("x"):
-            self.plot.setLogMode(x=checked, y=self.plot.ctrl.logYCheck.isChecked() if hasattr(self.plot.ctrl, 'logYCheck') else False)
-        else:
-            self.plot.setLogMode(x=self.plot.ctrl.logXCheck.isChecked() if hasattr(self.plot.ctrl, 'logXCheck') else False, y=checked)
-
-
 
 
 class InteractiveViewBox(pg.ViewBox):
@@ -222,18 +115,17 @@ class PlotItem(pg.PlotItem):
         event.accept()
         self._process_click_event(event)
 
-    def _process_key_event(self, key):
+    def _process_key_event(self, key_modifier, key):
         # ==================== The key press event logic ====================
-        #   (mouse_mode, clicked_button): action_description
+        #   (mouse_mode, modifier, clicked_buttons): action_description
         press_actions = {
-            ('select', QtCore.Qt.Key.Key_Left):     "move_mark_spot_left",
-            ('select', QtCore.Qt.Key.Key_Up):       "move_mark_spot_left",
-            ('select', QtCore.Qt.Key.Key_Right):    "move_mark_spot_right",
-            ('select', QtCore.Qt.Key.Key_Down):     "move_mark_spot_right",
+            ('select', Qt.KeyboardModifier.NoModifier, frozenset([QtCore.Qt.Key.Key_Left])):     "move_mark_spot_left",
+            ('select', Qt.KeyboardModifier.NoModifier, frozenset([QtCore.Qt.Key.Key_Up])):       "move_mark_spot_left",
+            ('select', Qt.KeyboardModifier.NoModifier, frozenset([QtCore.Qt.Key.Key_Right])):    "move_mark_spot_right",
+            ('select', Qt.KeyboardModifier.NoModifier, frozenset([QtCore.Qt.Key.Key_Down])):     "move_mark_spot_right",
         }
-
-        press_action = press_actions.get((self.mouse_mode, key), None)
         
+        press_action = press_actions.get((self.mouse_mode, key_modifier, frozenset(key)), None)
         # Start action
         if press_action is None:
             return
@@ -317,13 +209,12 @@ class PlotItem(pg.PlotItem):
             self._mark_curves.toggle_mark_curve(self._hint_curve.plot_data_item)
 
         elif click_action == 'raise_context_menu':
-            self.getContextMenus(event)
+            self.create_context_menu(event)
 
         elif click_action == 'raise_context_curve_menu':
-            self.getContextMenus(event)
+            self.create_context_menu(event)
         
-    @override
-    def getContextMenus(self, ev):
+    def create_context_menu(self, ev):
         def set_mouse_mode(mode):
             self.mouse_mode = mode
             if mode == "zoom":
@@ -394,11 +285,13 @@ class PlotItem(pg.PlotItem):
         grid_all_action.setChecked(self._grid_on_x and self._grid_on_y)
         grid_all_action.triggered.connect(lambda: self.showGrid(x=not(self._grid_on_x and self._grid_on_y), y=not(self._grid_on_x and self._grid_on_y), alpha=0.5))
         grid_on_menu.addAction(grid_all_action) # type: ignore
+
         grid_x_action = QAction("X grid", grid_on_menu)
         grid_x_action.setCheckable(True)
         grid_x_action.setChecked(self._grid_on_x)
         grid_x_action.triggered.connect(lambda: self.showGrid(x=not self._grid_on_x, y=self._grid_on_y, alpha=0.5))
         grid_on_menu.addAction(grid_x_action) # type: ignore
+
         grid_y_action = QAction("Y grid", grid_on_menu)
         grid_y_action.setCheckable(True)
         grid_y_action.setChecked(self._grid_on_y)
@@ -409,8 +302,8 @@ class PlotItem(pg.PlotItem):
 
         # ########## Axis features ##########
         axis_menu = menu.addMenu("Axis")
-        axis_menu.addMenu(AxisMenu("X axis", self))
-        axis_menu.addMenu(AxisMenu("Y axis", self))
+        # axis_menu.addMenu(AxisMenu("X axis", self))
+        # axis_menu.addMenu(AxisMenu("Y axis", self))
         
         menu.addSeparator()
         
