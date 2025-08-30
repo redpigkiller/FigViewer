@@ -1,7 +1,6 @@
 from typing import Literal, override
 
 import numpy as np
-from scipy.spatial import KDTree
 
 import pyqtgraph as pg
 from PyQt6 import QtCore
@@ -10,8 +9,8 @@ from PyQt6.QtCore import QPointF, QTimer, Qt
 from PyQt6.QtWidgets import QMenu, QApplication, QWidget, QHBoxLayout, QSlider, QVBoxLayout, QPushButton, QWidgetAction, QDoubleSpinBox, QLabel, QRadioButton, QButtonGroup
 
 from .key_filter import KeyFilter
-from .mark_spot import HintSpot, MarkSpots, AnchorDraggableTextItem, DataPoint
-from .mark_curve import HintCurve, MarkCurves
+from .mark_spot import MarkSpots
+from .mark_curve import MarkCurves
 
 
 class InteractiveViewBox(pg.ViewBox):
@@ -48,15 +47,8 @@ class PlotItem(pg.PlotItem):
         self.installEventFilter(self.key_filter)    # Install the filter onto this widget
         self.key_filter.actionTriggered.connect(self._process_key_event)   # Connect the filter's signal
 
-        self._hint_spot: HintSpot = HintSpot(self)
         self._mark_spots: MarkSpots = MarkSpots(self)
-
-        self._hint_curve: HintCurve = HintCurve(self)
         self._mark_curves: MarkCurves = MarkCurves(self)
-
-        # Helper data
-        self._kd_tree: dict[pg.PlotDataItem, KDTree] = {}       # For find nearest data point
-        self._seg_vec: dict[pg.PlotDataItem, dict] = {}         # For find nearest curve
 
         self._mouse_hover_lock: bool = False
         self._mouse_double_click_lock: bool = False
@@ -119,13 +111,17 @@ class PlotItem(pg.PlotItem):
         # ==================== The key press event logic ====================
         #   (mouse_mode, modifier, clicked_buttons): action_description
         press_actions = {
-            ('select', Qt.KeyboardModifier.NoModifier, frozenset([QtCore.Qt.Key.Key_Left])):     "move_mark_spot_left",
-            ('select', Qt.KeyboardModifier.NoModifier, frozenset([QtCore.Qt.Key.Key_Up])):       "move_mark_spot_left",
-            ('select', Qt.KeyboardModifier.NoModifier, frozenset([QtCore.Qt.Key.Key_Right])):    "move_mark_spot_right",
-            ('select', Qt.KeyboardModifier.NoModifier, frozenset([QtCore.Qt.Key.Key_Down])):     "move_mark_spot_right",
+            ('select', Qt.KeyboardModifier.NoModifier,      frozenset([QtCore.Qt.Key.Key_Left])):     "move_mark_spot_left",
+            ('select', Qt.KeyboardModifier.NoModifier,      frozenset([QtCore.Qt.Key.Key_Up])):       "move_mark_spot_left",
+            ('select', Qt.KeyboardModifier.NoModifier,      frozenset([QtCore.Qt.Key.Key_Right])):    "move_mark_spot_right",
+            ('select', Qt.KeyboardModifier.NoModifier,      frozenset([QtCore.Qt.Key.Key_Down])):     "move_mark_spot_right",
+            ('grab',   Qt.KeyboardModifier.ControlModifier, frozenset([QtCore.Qt.Key.Key_C])):        "copy_mark_curve",
+            ('grab',   Qt.KeyboardModifier.ControlModifier, frozenset([QtCore.Qt.Key.Key_V])):        "paste_mark_curve",
+            ('grab',   Qt.KeyboardModifier.ControlModifier, frozenset([QtCore.Qt.Key.Key_X])):        "cut_mark_curve",
         }
         
         press_action = press_actions.get((self.mouse_mode, key_modifier, frozenset(key)), None)
+
         # Start action
         if press_action is None:
             return
@@ -134,6 +130,7 @@ class PlotItem(pg.PlotItem):
             self._mark_spots.move_mark_spot_forward()
         elif press_action == 'move_mark_spot_right':
             self._mark_spots.move_mark_spot_backward()
+        
 
     def _process_hover_event(self, event):
         # ==================== The mouse move event logic ====================
@@ -146,27 +143,20 @@ class PlotItem(pg.PlotItem):
         move_action = move_actions.get((self.mouse_mode), None)
         local_pos = event.pos()                 # Position relative to the current widget (plot_item)
         scene_pos = self.mapToScene(local_pos)  # Position in the global graphics scene
-
+        
         # Start action
         if move_action is None:
             return
         
         elif move_action == 'renew_hint_spot':
-            # Check covered items
-            items_under_mouse = self.scene().items(scene_pos) # type: ignore
-            if any(isinstance(item, (AnchorDraggableTextItem)) for item in items_under_mouse):
-                data_point = None
-            else:
-                # Position in the data/view coordinate system
-                view_pos = self.getViewBox().mapSceneToView(scene_pos) # type: ignore
-                data_point = self._find_nearest_data_point(view_pos, pixel_dist_threshold=20)
-            self._hint_spot.update_hint_spot(data_point)
+            # Position in the data/view coordinate system
+            view_pos = self.getViewBox().mapSceneToView(scene_pos) # type: ignore
+            self._mark_spots.update_hint_spot(view_pos, pixel_dist_threshold=20)
 
         elif move_action == 'renew_hint_curve':
             # Position in the data/view coordinate system
             view_pos = self.getViewBox().mapSceneToView(scene_pos) # type: ignore
-            plot_data_item = self._find_nearest_curve(view_pos, 20)
-            self._hint_curve.update_hint_curve(plot_data_item)
+            self._mark_curves.update_hint_curve(view_pos, pixel_dist_threshold=20)
     
     def _process_click_event(self, event) -> None:
         # ==================== The mouse click event logic ====================
@@ -191,37 +181,59 @@ class PlotItem(pg.PlotItem):
             return
         
         elif click_action == 'renew_mark_spot':
-            if self._hint_spot.data_point is not None:
-                self._mark_spots.clear_mark_spot()
-                self._mark_spots.update_mark_spot(self._hint_spot.data_point)
+            self._mark_spots.clear_mark_spot()
+            self._mark_spots.update_mark_spot()
 
         elif click_action == 'add_mark_spot':
-            self._mark_spots.update_mark_spot(self._hint_spot.data_point)
+            self._mark_spots.update_mark_spot()
 
         elif click_action == 'discard_mark_spot':
-            self._mark_spots.discard_mark_spot(self._hint_spot.data_point)
+            self._mark_spots.discard_mark_spot()
 
         elif click_action == 'renew_selected_curve':
             self._mark_curves.clear_mark_curve()
-            self._mark_curves.add_mark_curve(self._hint_curve.plot_data_item)
+            self._mark_curves.update_mark_curve()
         
         elif click_action == 'update_selected_curve':
-            self._mark_curves.toggle_mark_curve(self._hint_curve.plot_data_item)
+            self._mark_curves.toggle_mark_curve()
 
         elif click_action == 'raise_context_menu':
             self.create_context_menu(event)
 
         elif click_action == 'raise_context_curve_menu':
             self.create_context_menu(event)
-        
-    def create_context_menu(self, ev):
-        def set_mouse_mode(mode):
-            self.mouse_mode = mode
-            if mode == "zoom":
-                self.getViewBox().setMouseMode(self.getViewBox().RectMode) # type: ignore
-            else:
-                self.getViewBox().setMouseMode(self.getViewBox().PanMode) # type: ignore
+    
+    def set_mouse_mode(self, mode):
+        if self.mouse_mode == mode:
+            return
 
+        transition_actions = {
+            ('pan', 'select'):      "keep_spots",
+            ('select', 'pan'):      "keep_spots",
+        }
+
+        transition_action = transition_actions.get((self.mouse_mode, mode), "default")
+
+        # Common actions
+        self.mouse_mode = mode
+        if mode == "zoom":
+            self.getViewBox().setMouseMode(self.getViewBox().RectMode) # type: ignore
+        else:
+            self.getViewBox().setMouseMode(self.getViewBox().PanMode) # type: ignore
+        
+        if transition_action == "default":
+            self._mark_spots.clear_hint_spot()
+            self._mark_spots.clear_mark_spot()
+            self._mark_curves.clear_hint_curve()
+            self._mark_curves.clear_mark_curve()
+
+    @override
+    def showGrid(self, x=None, y=None, alpha=None):
+        self._grid_on_x = x if x is not None else self._grid_on_x
+        self._grid_on_y = y if y is not None else self._grid_on_y
+        super().showGrid(x=self._grid_on_x, y=self._grid_on_y, alpha=alpha)
+
+    def create_context_menu(self, ev):
         ev.accept()
         
         menu = QMenu()
@@ -235,10 +247,7 @@ class PlotItem(pg.PlotItem):
                 actions_to_keep["view_all"] = action
             elif action_text == "Export...":
                 actions_to_keep["export"] = action
-            # 如果您想保留 'Plot Options' 子選單，可以加上：
-            # elif action_text == "Plot Options":
-            #     actions_to_keep["plot_options"] = action
-        # 4. 清空原始選單，準備重建
+
         menu.clear()
 
         # ########## Mouse mode region ##########
@@ -248,28 +257,28 @@ class PlotItem(pg.PlotItem):
         pan_action = QAction("pan mode", menu)
         pan_action.setCheckable(True)
         pan_action.setChecked(self.mouse_mode == "pan")
-        pan_action.triggered.connect(lambda: set_mouse_mode("pan"))
+        pan_action.triggered.connect(lambda: self.set_mouse_mode("pan"))
         mode_group.addAction(pan_action)
         menu.addAction(pan_action)
         
         zoom_action = QAction("zoom mode", menu)
         zoom_action.setCheckable(True)
         zoom_action.setChecked(self.mouse_mode == "zoom")
-        zoom_action.triggered.connect(lambda: set_mouse_mode("zoom"))
+        zoom_action.triggered.connect(lambda: self.set_mouse_mode("zoom"))
         mode_group.addAction(zoom_action)
         menu.addAction(zoom_action)
         
         select_action = QAction("select mode", menu)
         select_action.setCheckable(True)
         select_action.setChecked(self.mouse_mode == "select")
-        select_action.triggered.connect(lambda: set_mouse_mode("select"))
+        select_action.triggered.connect(lambda: self.set_mouse_mode("select"))
         mode_group.addAction(select_action)
         menu.addAction(select_action)
         
         grab_action = QAction("grab mode", menu)
         grab_action.setCheckable(True)
         grab_action.setChecked(self.mouse_mode == "grab")
-        grab_action.triggered.connect(lambda: set_mouse_mode("grab"))
+        grab_action.triggered.connect(lambda: self.set_mouse_mode("grab"))
         mode_group.addAction(grab_action)
         menu.addAction(grab_action)
         
@@ -330,115 +339,4 @@ class PlotItem(pg.PlotItem):
         self.toggle_type_state = checked
         print(f"Toggle type: {'ON' if checked else 'OFF'}")
 
-    @override
-    def showGrid(self, x=None, y=None, alpha=None):
-        self._grid_on_x = x if x is not None else self._grid_on_x
-        self._grid_on_y = y if y is not None else self._grid_on_y
-        super().showGrid(x=self._grid_on_x, y=self._grid_on_y, alpha=alpha)
 
-    # ########## Helper Functions ##########
-    def _find_nearest_data_point(self, coord_pos: QPointF, specified_plot_data_item: pg.PlotDataItem|None=None, pixel_dist_threshold: float=-1) -> DataPoint|None:
-        min_dist = float('inf')
-        min_data_point = None
-
-        if specified_plot_data_item is not None:
-            search_plot_data_items = [specified_plot_data_item]
-        else:
-            search_plot_data_items = self.listDataItems()
-        
-        for plot_data_item in search_plot_data_items:
-            data = plot_data_item.getData()
-            if any(d is None for d in data):
-                continue
-
-            pts = np.column_stack(data)     # shape (N, 2)
-
-            # Check if KDTree is already created and create it for fast nearest neighbor search
-            if plot_data_item not in self._kd_tree:
-                self._kd_tree[plot_data_item] = KDTree(pts) # Create KDTree O(N log N)           
-
-            # Query nearest neighbor O(log N)
-            _, idx = self._kd_tree[plot_data_item].query([coord_pos.x(), coord_pos.y()], k=1, p=2)
-            
-            # Map the nearest data point to screen position
-            view_point = pg.QtCore.QPointF(pts[idx][0], pts[idx][1])
-            screen_point = self.getViewBox().mapViewToScene(view_point) # type: ignore
-            mouse_point = self.getViewBox().mapViewToScene(coord_pos) # type: ignore
-
-            square_pixel_dist = np.sqrt((screen_point.x() - mouse_point.x())**2 + (screen_point.y() - mouse_point.y())**2) # type: ignore
-            
-            if pixel_dist_threshold < 0 and square_pixel_dist < min_dist:
-                min_dist = square_pixel_dist
-                min_data_point = DataPoint(plot_data_item, int(idx), pts.shape[0])
-
-            elif square_pixel_dist < pixel_dist_threshold:
-                return DataPoint(plot_data_item, int(idx), pts.shape[0])
-        
-        return min_data_point
-
-    def _find_nearest_curve(self, coord_pos: QPointF, pixel_dist_threshold: float=-1) -> pg.PlotDataItem|None:
-        min_dist = float('inf')
-        min_plot_data_item = None
-
-        for plot_data_item in self.listDataItems():
-            if plot_data_item not in self._seg_vec:
-                data = plot_data_item.getData()
-                if any(d is None for d in data):
-                    continue
-                pts = np.column_stack(data)     # shape (N, 2)
-                self._seg_vec[plot_data_item] = self._precompute_polyline(pts)
-
-            closest_point = self._query_nearest_point(self._seg_vec[plot_data_item], (coord_pos.x(), coord_pos.y()))
-            
-            # Map the nearest data point to screen position
-            view_point = pg.QtCore.QPointF(closest_point[0], closest_point[1])
-            screen_point = self.getViewBox().mapViewToScene(view_point) # type: ignore
-            mouse_point = self.getViewBox().mapViewToScene(coord_pos) # type: ignore
-
-            square_pixel_dist = np.sqrt((screen_point.x() - mouse_point.x())**2 + (screen_point.y() - mouse_point.y())**2) # type: ignore
-            
-            if pixel_dist_threshold < 0 and square_pixel_dist < min_dist:
-                min_dist = square_pixel_dist
-                min_plot_data_item = plot_data_item
-
-            elif square_pixel_dist < pixel_dist_threshold:
-                return plot_data_item
-        
-        return min_plot_data_item
-
-    def _precompute_polyline(self, data_points: np.ndarray) -> dict:
-        if data_points.shape[0] == 1:
-            return {"is_single_point": True, "point": data_points[0]}
-
-        start = data_points[:-1]
-        vec = data_points[1:] - start
-        len_sq = np.einsum('ij,ij->i', vec, vec)  # faster dot product
-
-        # avoid zero division in projection step
-        len_sq[len_sq < 1e-12] = 1.0
-
-        return {
-            "is_single_point": False,
-            "segments_start": start,
-            "segment_vectors": vec,
-            "segment_lengths_sq": len_sq
-        }
-
-    def _query_nearest_point(self, precomputed_data: dict, query_point: tuple|list) -> np.ndarray:
-        qp = np.asarray(query_point, dtype=np.float64)
-
-        if precomputed_data["is_single_point"]:
-            return precomputed_data["point"]
-
-        seg_start = precomputed_data["segments_start"]
-        seg_vec = precomputed_data["segment_vectors"]
-        seg_len_sq = precomputed_data["segment_lengths_sq"]
-
-        v = qp - seg_start
-        t = np.sum(v * seg_vec, axis=1) / seg_len_sq
-        t = np.clip(t, 0.0, 1.0)
-        p = seg_start + t[:, None] * seg_vec
-
-        # use squared distance for efficiency
-        d2 = np.sum((p - qp)**2, axis=1)
-        return p[np.argmin(d2)]

@@ -24,7 +24,8 @@ if __name__ == "__main__":
     # figplot.pause()
     # # fig1.xlim(1, 2)
     fig2 = figplot.figure()
-    fig2.plot(2*y)
+    fig2.plot(2*y, hold=True)
+    fig2.plot(2*x, hold=True)
     figplot.show()
 
     figplot.close_all()

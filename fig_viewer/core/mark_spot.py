@@ -1,6 +1,7 @@
 from typing import NamedTuple, TYPE_CHECKING
 
 import numpy as np
+from scipy.spatial import KDTree
 
 from PyQt6 import QtCore
 from PyQt6.QtCore import QPointF, pyqtSignal
@@ -214,14 +215,14 @@ class HintSpot:
         self.data_point: DataPoint | None = None
         self.scatter_item: pg.ScatterPlotItem | None = None
 
-    def update_hint_spot(self, data_point: DataPoint|None):
+    def update(self, data_point: DataPoint|None):
         """
             1. If new data_point is None: No hint spot -> clear and return
             2. If we have new data_point but it is the same as current one -> do nothing and return
             3. If we have new data_point and it is different from current one -> update hint spot and return
         """
         if data_point is None:
-            self.clear_hint_spot()
+            self.clear()
             return
 
         elif self.data_point == data_point:
@@ -238,7 +239,7 @@ class HintSpot:
         else:
             self.scatter_item.setData([coords[0]], [coords[1]])
             
-    def clear_hint_spot(self):
+    def clear(self):
         if self.scatter_item is not None:
             self._parent_win.removeItem(self.scatter_item)
             self.scatter_item = None
@@ -250,8 +251,13 @@ class MarkSpots:
         self._parent_win = parent_win
         self.mark_spots: list[MarkSpot] = []
         self.in_focus_mark_spot = None
+
+        self._hint_spot: HintSpot = HintSpot(self._parent_win)
+
+        # Helper data
+        self._kd_tree: dict[pg.PlotDataItem, KDTree] = {}       # For find nearest data point
     
-    def update_mark_spot(self, data_point: DataPoint|None):
+    def add_mark_spot(self, data_point: DataPoint|None):
         if data_point is None:
             return
 
@@ -269,7 +275,7 @@ class MarkSpots:
         self.mark_spots.append(mark_spot)
         self.in_focus_mark_spot = mark_spot
         
-    def discard_mark_spot(self, data_point: DataPoint|None):
+    def remove_mark_spot(self, data_point: DataPoint|None):
         if data_point is None:
             return
         
@@ -312,14 +318,70 @@ class MarkSpots:
         self.in_focus_mark_spot.move_to_pos(DataPoint(plot_data_item, data_index, data_length))
 
     def drag_event(self, mark_spot: MarkSpot, pos: QPointF):
-        new_data_point = self._parent_win._find_nearest_data_point(pos, specified_plot_data_item=mark_spot.data_point.plot_data_item)
+        new_data_point = self.find_nearest_data_point(pos, specified_plot_data_item=mark_spot.data_point.plot_data_item)
         if new_data_point is None:
             return
         
         mark_spot.move_to_pos(new_data_point)
+
+    def update_hint_spot(self, view_pos, pixel_dist_threshold=20):
+        data_point = self.find_nearest_data_point(view_pos, pixel_dist_threshold=pixel_dist_threshold)
+        self._hint_spot.update(data_point)
+
+    def update_mark_spot(self):
+        self.add_mark_spot(self._hint_spot.data_point)
+        
+    def discard_mark_spot(self):
+        self.remove_mark_spot(self._hint_spot.data_point)
+
+    def clear_hint_spot(self):
+        self._hint_spot.clear()
 
     def _find_mark_spot_by_data_point(self, data_point: DataPoint) -> MarkSpot|None:
         for mark_spot in self.mark_spots:
             if mark_spot.data_point == data_point:
                 return mark_spot
         return None
+    
+    def find_nearest_data_point(self, coord_pos: QPointF, specified_plot_data_item: pg.PlotDataItem|None=None, pixel_dist_threshold: float=-1) -> DataPoint|None:
+        min_dist = float('inf')
+        min_data_point = None
+
+        if specified_plot_data_item is not None:
+            search_plot_data_items = [specified_plot_data_item]
+        else:
+            search_plot_data_items = self._parent_win.listDataItems()
+
+        #TODO:
+        # Filter out non-user-created-data items
+        # search_plot_data_items = [item for item in search_plot_data_items ]
+        
+        for plot_data_item in search_plot_data_items:
+            data = plot_data_item.getData()
+            if any(d is None for d in data):
+                continue
+
+            pts = np.column_stack(data)     # shape (N, 2)
+
+            # Check if KDTree is already created and create it for fast nearest neighbor search
+            if plot_data_item not in self._kd_tree:
+                self._kd_tree[plot_data_item] = KDTree(pts) # Create KDTree O(N log N)           
+
+            # Query nearest neighbor O(log N)
+            _, idx = self._kd_tree[plot_data_item].query([coord_pos.x(), coord_pos.y()], k=1, p=2)
+            
+            # Map the nearest data point to screen position
+            view_point = pg.QtCore.QPointF(pts[idx][0], pts[idx][1])
+            screen_point = self._parent_win.getViewBox().mapViewToScene(view_point) # type: ignore
+            mouse_point = self._parent_win.getViewBox().mapViewToScene(coord_pos) # type: ignore
+
+            square_pixel_dist = np.sqrt((screen_point.x() - mouse_point.x())**2 + (screen_point.y() - mouse_point.y())**2) # type: ignore
+            
+            if pixel_dist_threshold < 0 and square_pixel_dist < min_dist:
+                min_dist = square_pixel_dist
+                min_data_point = DataPoint(plot_data_item, int(idx), pts.shape[0])
+
+            elif square_pixel_dist < pixel_dist_threshold:
+                return DataPoint(plot_data_item, int(idx), pts.shape[0])
+        
+        return min_data_point

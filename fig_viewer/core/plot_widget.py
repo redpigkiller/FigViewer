@@ -126,7 +126,7 @@ class PlotWidget():
         if ylabel:
             self._plot_core.ylabel(ylabel)
         if hold:
-            self._plot_core.hold = True
+            self._plot_core.hold('on')
         # if label:
         #     self._plot_core.legend([label])
         if grid:
