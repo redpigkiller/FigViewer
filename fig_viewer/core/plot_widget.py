@@ -8,7 +8,28 @@ import pyqtgraph as pg
 
 from .plot_core import PlotCore
 
-# 線型對應
+
+color_map_shorthand = {
+    'r': (255, 0, 0),       # red
+    'g': (0, 255, 0),       # green
+    'b': (0, 0, 255),       # blue
+    'c': (0, 255, 255),     # cyan
+    'm': (255, 0, 255),     # magenta
+    'y': (255, 255, 0),     # yellow
+    'k': (0, 0, 0),         # black
+    'w': (255, 255, 255)    # white
+}
+
+color_map_order = [
+    (0.0000*255, 0.4470*255, 0.7410*255),  # blue
+    (0.8500*255, 0.3250*255, 0.0980*255),  # orange/red
+    (0.9290*255, 0.6940*255, 0.1250*255),  # yellow
+    (0.4940*255, 0.1840*255, 0.5560*255),  # purple
+    (0.4660*255, 0.6740*255, 0.1880*255),  # green
+    (0.3010*255, 0.7450*255, 0.9330*255),  # light blue
+    (0.6350*255, 0.0780*255, 0.1840*255)   # dark red
+]
+
 linestyle_map = {
     '-': QtCore.Qt.PenStyle.SolidLine,
     '--': QtCore.Qt.PenStyle.DashLine,
@@ -16,17 +37,6 @@ linestyle_map = {
     '-.': QtCore.Qt.PenStyle.DashDotLine
 }
 
-# 顏色處理（支持 'r', 'g' 等）
-color_map = {
-    'r': (255, 0, 0),
-    'g': (0, 255, 0),
-    'b': (0, 0, 255),
-    'k': (0, 0, 0),
-    'm': (255, 0, 255),
-    'y': (255, 255, 0),
-    'c': (0, 255, 255),
-    'w': (255, 255, 255)
-}
 
 class PlotWidget():
     def __init__(self, *args, **kwargs):
@@ -73,27 +83,33 @@ class PlotWidget():
         # self.save_btn.clicked.connect(self.save_image)
         # self.open_btn.clicked.connect(self.open_file)
 
+        self._flag_initialized()
+
+    def _flag_initialized(self):
+        self._color_idx = 0
+
     def as_widget(self):
         return self._plot_widget
     
     def subplot(self, row: int, col: int, rowspan=1, colspan=1) -> None:
         self._plot_core.subplot(row, col, rowspan, colspan)
 
-
     def plot(self, *args,
-         linewidth: int = 1,
-         color: Literal['r', 'g', 'b', 'k', 'm', 'y', 'c', 'w']|str|tuple = 'b',
-         linestyle: Literal['-', '--', ':', '-.'] = '-',
-         marker: Literal['o', 's', 'd', 't', '+', '*', 'x']|None = None,
-         markersize: int = 6,
-         hold: bool = False,
-         grid: bool = False,
-         label: str|None = None,
-         title: str|None = None,
-         xlabel: str|None = None,
-         ylabel: str|None = None,
-         xlim: tuple[float, float]|None = None,
-         ylim: tuple[float, float]|None = None):
+        linewidth: int = 1,
+        color: Literal['r', 'g', 'b', 'c', 'm', 'y', 'k', 'w']|str|tuple|None = None,
+        linestyle: Literal['-', '--', ':', '-.'] = '-',
+        marker: Literal['o', 's', 't', 'd', '+', '*', 'x']|None = None,
+        marker_size: int = 6,
+        marker_facecolor: Literal['r', 'g', 'b', 'c', 'm', 'y', 'k', 'w']|str|tuple|None = None,
+        marker_edgecolor: Literal['r', 'g', 'b', 'c', 'm', 'y', 'k', 'w']|str|tuple|None = None,
+        hold: bool = False,
+        grid: bool = False,
+        label: str|None = None,
+        title: str|None = None,
+        xlabel: str|None = None,
+        ylabel: str|None = None,
+        xlim: tuple[float, float]|None = None,
+        ylim: tuple[float, float]|None = None):
         """
         MATLAB-style plot function using pyqtgraph, with Literal type hints for IDE help.
 
@@ -110,14 +126,29 @@ class PlotWidget():
             xlabel: X-axis label
             ylabel: Y-axis label
         """
-        if isinstance(color, str):
-            color = color_map.get(color, color)
+        color = self._check_color(color)
+        marker_facecolor = self._check_color(marker_facecolor)
+        marker_edgecolor = self._check_color(marker_edgecolor)
 
+        line_style = linestyle_map.get(linestyle, None)
+        if line_style is None:
+            raise ValueError(f"Unsupported line style: {linestyle}")
         
-        pen = pg.mkPen(color=color, width=linewidth,
-                       style=linestyle_map.get(linestyle, QtCore.Qt.PenStyle.SolidLine))
+        if marker is not None and marker not in ['o', 's', 't', 'd', '+', '*', 'x']:
+            raise ValueError(f"Unsupported marker style: {marker}")
 
-        self._plot_core.plot(*args, pen=pen)
+        if label is None:
+            label = ''
+        
+        pen = pg.mkPen(color=color, width=linewidth, style=line_style)
+        self._plot_core.plot(*args,
+                             name=label,
+                             pen=pen,
+                             symbol=marker,
+                             symbolBrush=marker_facecolor,
+                             symbolPen=marker_edgecolor,
+                             symbolSize=marker_size,
+        )
         
         if title:
             self._plot_core.title(title)
@@ -127,8 +158,6 @@ class PlotWidget():
             self._plot_core.ylabel(ylabel)
         if hold:
             self._plot_core.hold('on')
-        # if label:
-        #     self._plot_core.legend([label])
         if grid:
             self._plot_core.grid()
         if xlim:
@@ -136,9 +165,8 @@ class PlotWidget():
         if ylim:
             self._plot_core.ylim(*ylim)
 
-
-
-
+    def legend(self, inputs: list[str]|Literal['on', 'off'] = 'on', offset=(10, 10), **kwargs) -> None:
+        self._plot_core.legend(inputs, offset=offset, **kwargs)
 
     def save_image(self):
         exporter = pg.exporters.ImageExporter(self.plot_item)
@@ -160,6 +188,24 @@ class PlotWidget():
                 self.plot(x, y, pen='b')
             except Exception as e:
                 QtWidgets.QMessageBox.warning(self, "Error", f"Failed to load data:\n{e}")
+
+
+    def _check_color(self, color):
+        if isinstance(color, str):
+            color = color_map_shorthand.get(color, None)
+            if color is None:
+                raise ValueError(f"Unsupported color shorthand: {color}")
+        elif isinstance(color, tuple) and len(color) == 3:
+            if any(not (0 <= c <= 255) for c in color):
+                raise ValueError("Color RGB values must be in the range 0-255")
+        elif color is None:
+            color = color_map_order[self._color_idx % len(color_map_order)]
+            self._color_idx += 1
+        else:
+            raise ValueError("Color must be a shorthand string, RGB tuple, or None")
+        
+        return color
+    
 
 # if __name__ == "__main__":
 #     app = QtWidgets.QApplication(sys.argv)

@@ -162,7 +162,7 @@ class MarkCurves:
 
         start = data_points[:-1]
         vec = data_points[1:] - start
-        len_sq = np.einsum('ij,ij->i', vec, vec)  # faster dot product
+        len_sq = np.einsum('ij,ij->i', vec, vec)  # dot product
 
         # avoid zero division in projection step
         len_sq[len_sq < 1e-12] = 1.0
