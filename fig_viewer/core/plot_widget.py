@@ -65,7 +65,7 @@ class PlotWidget():
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
-        # Graph afrea
+        # Graph area
         self._plot_core = PlotCore()
 
         self._plot_core.setBackground('w')

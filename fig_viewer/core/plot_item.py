@@ -1,5 +1,5 @@
 from typing import Literal, override
-
+import json
 import numpy as np
 
 import pyqtgraph as pg
@@ -35,6 +35,7 @@ class InteractiveViewBox(pg.ViewBox):
 class PlotItem(pg.PlotItem):
     def __init__(self, *args, **kwargs):
         super().__init__(viewBox=InteractiveViewBox(), *args, **kwargs)
+        self._clipboard = QApplication.clipboard()
 
         self._legend_item: pg.LegendItem | None = None
         self._legend_names: list[tuple[pg.PlotDataItem, str]] = []
@@ -118,6 +119,8 @@ class PlotItem(pg.PlotItem):
             ('grab',   Qt.KeyboardModifier.ControlModifier, frozenset([QtCore.Qt.Key.Key_C])):        "copy_mark_curve",
             ('grab',   Qt.KeyboardModifier.ControlModifier, frozenset([QtCore.Qt.Key.Key_V])):        "paste_mark_curve",
             ('grab',   Qt.KeyboardModifier.ControlModifier, frozenset([QtCore.Qt.Key.Key_X])):        "cut_mark_curve",
+            ('grab',   Qt.KeyboardModifier.NoModifier,      frozenset([QtCore.Qt.Key.Key_Delete])):   "delete_mark_curve",
+            # ('grab',   Qt.KeyboardModifier.ControlModifier, frozenset([QtCore.Qt.Key.Key_Z])):        "undo",
         }
         
         press_action = press_actions.get((self.mouse_mode, key_modifier, frozenset(key)), None)
@@ -130,6 +133,22 @@ class PlotItem(pg.PlotItem):
             self._mark_spots.move_mark_spot_forward()
         elif press_action == 'move_mark_spot_right':
             self._mark_spots.move_mark_spot_backward()
+        elif press_action == 'copy_mark_curve':
+            selected_curves = self._mark_curves.get_selected_curve()
+            self._copy_curve_to_clipboard(selected_curves)
+        elif press_action == 'paste_mark_curve':
+            self._paste_curve_from_clipboard()
+        elif press_action == 'cut_mark_curve':
+            selected_curves = self._mark_curves.get_selected_curve()
+            self._copy_curve_to_clipboard(selected_curves)
+            for selected_curve in selected_curves:
+                self._mark_curves.remove_mark_curve(selected_curve)
+                self.removeItem(selected_curve)
+        elif press_action == 'delete_mark_curve':
+            selected_curves = self._mark_curves.get_selected_curve()
+            for selected_curve in selected_curves:
+                self._mark_curves.remove_mark_curve(selected_curve)
+                self.removeItem(selected_curve)
         
 
     def _process_hover_event(self, event):
@@ -340,3 +359,52 @@ class PlotItem(pg.PlotItem):
         print(f"Toggle type: {'ON' if checked else 'OFF'}")
 
 
+    def _copy_curve_to_clipboard(self, plot_data_items: list[pg.PlotDataItem]) -> None:
+        for plot_data_item in plot_data_items:
+            x, y = plot_data_item.getData()
+            opts = plot_data_item.opts.copy()
+
+            # Deal with non-serializable objects
+            if opts.get("pen") is not None:
+                pen = opts["pen"]
+                opts["pen"] = {
+                    "color": pen.color().name(),
+                    "width": pen.width(),
+                }
+
+            # Deal with legend name
+            if self._legend_item is not None:
+                for item, name in self._legend_names:
+                    if item == plot_data_item:
+                        opts["name"] = name
+                        break
+            
+            assert x is not None and y is not None, "No data in the selected curve."
+
+            if self._clipboard is not None:
+                data = {"x": x.tolist(), "y": y.tolist(), "opts": opts}
+                self._clipboard.setText(json.dumps(data))
+            else:
+                print("Clipboard not available.")
+
+    def _paste_curve_from_clipboard(self) -> None:
+        if self._clipboard is None:
+            print("Clipboard not available.")
+            return None
+        
+        try:
+            data = json.loads(self._clipboard.text())
+            x, y = data["x"], data["y"]
+            opts = data["opts"]
+
+            # Recover pen
+            if isinstance(opts.get("pen"), dict):
+                pen_info = opts["pen"]
+                opts["pen"] = pg.mkPen(pen_info["color"], width=pen_info["width"])
+
+            plot_data_item = pg.PlotDataItem(x, y, **opts)
+            self.addItem(plot_data_item)
+            self._legend_names.append((plot_data_item, opts.get("name", "")))
+    
+        except Exception as e:
+            print("Paste failed:", e)

@@ -103,7 +103,7 @@ class MarkCurves:
         self.mark_curves = {}
 
     def update_hint_curve(self, view_pos, pixel_dist_threshold=20):
-        plot_data_item = self.find_nearest_curve(view_pos, pixel_dist_threshold)
+        plot_data_item = self._find_nearest_curve(view_pos, pixel_dist_threshold)
         self._hint_curve.update(plot_data_item)
 
     def update_mark_curve(self):
@@ -124,7 +124,10 @@ class MarkCurves:
     def clear_hint_curve(self):
         self._hint_curve.clear()
 
-    def find_nearest_curve(self, coord_pos: QPointF, pixel_dist_threshold: float=-1) -> pg.PlotDataItem|None:
+    def get_selected_curve(self) -> list[pg.PlotDataItem]:
+        return list(self.mark_curves.keys())
+
+    def _find_nearest_curve(self, coord_pos: QPointF, pixel_dist_threshold: float=-1) -> pg.PlotDataItem|None:
         min_dist = float('inf')
         min_plot_data_item = None
 
