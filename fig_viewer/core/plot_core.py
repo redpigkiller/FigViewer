@@ -64,51 +64,58 @@ class PlotCore(pg.GraphicsLayoutWidget):
         self._rowspan = 1
         self._colspan = 1
 
-    def subplot(self, row: int, col: int, rowspan=1, colspan=1) -> None:
+    def set_subplot(self, row: int, col: int, rowspan=1, colspan=1) -> None:
         self._row = row
         self._col = col
         self._rowspan = rowspan
         self._colspan = colspan
 
-    def xlim(self, xmin=None, xmax=None) -> None:
+    def set_x_range(self, xmin=None, xmax=None) -> None:
         p = self._get_plot_item()
         p.setXRange(xmin, xmax) # type: ignore
 
-    def ylim(self, ymin=None, ymax=None) -> None:
+    def set_y_range(self, ymin=None, ymax=None) -> None:
         p = self._get_plot_item()
         p.setYRange(ymin, ymax) # type: ignore
 
-    def autoscale(self) -> None:
+    def auto_range(self) -> None:
         p = self._get_plot_item()
         p.autoRange() # type: ignore
 
-    def grid(self, status: Literal['on', 'off'] = 'on') -> None:
+    def set_grid(self, status: Literal['on', 'off']|bool = 'on') -> None:
         p = self._get_plot_item()
-        if status == 'on':
+        if isinstance(status, bool):
+            status = 'on' if status else 'off'
+            
+        if status.lower() == 'on':
             p.showGrid(x=True, y=True)
         else:
             p.showGrid(x=False, y=False)
 
-    def title(self, title: str) -> None:
+    def set_title(self, title: str) -> None:
         p = self._get_plot_item()
         p.setTitle(title)
 
-    def xlabel(self, label: str) -> None:
+    def set_x_label(self, label: str) -> None:
         p = self._get_plot_item()
         p.setLabel('bottom', label)
 
-    def ylabel(self, label: str) -> None:
+    def set_y_label(self, label: str) -> None:
         p = self._get_plot_item()
         p.setLabel('left', label)
 
-    def hold(self, status: Literal['on', 'off'] = 'on') -> None:
+    def set_hold(self, status: Literal['on', 'off']|bool = 'on') -> None:
         p = self._get_plot_item()
-        if status == 'on':
+        if isinstance(status, bool):
+            status = 'on' if status else 'off'
+        
+        if status.lower() == 'on':
             self._plot_item_settings[p].hold = True
         else:
             self._plot_item_settings[p].hold = False
 
-    def legend(self, inputs: list[str]|Literal['on', 'off'] = 'on', offset=(10, 10), **kwargs) -> None:
+
+    def set_legend(self, inputs: list[str]|Literal['on', 'off'] = 'on', offset=(10, 10), **kwargs) -> None:
         """
         Usage:
         1. Add legend when plotting: wp.plot(..., name="legend_name")
@@ -157,29 +164,29 @@ if __name__ == '__main__':
     wp.setWindowTitle('pyqtgraph example: Plotting')
     wp.setBackground('w')
 
-    wp.subplot(0, 0)
+    wp.set_subplot(0, 0)
     x = np.cos(np.linspace(0, 2*np.pi, 10))
     y = np.sin(np.linspace(0, 400*np.pi, 10))
-    wp.xlim(-1, 14)
-    wp.legend('off')
-    wp.hold('on')
+    wp.set_x_range(-1, 14)
+    wp.set_legend('off')
+    wp.set_hold('on')
     wp.plot(x, y, name="0")
     wp.plot(2*y, name="1")
     wp.plot([ 2, 3, 4, 5, 6], name="2")
-    wp.legend(['a', 'b', ])
-    wp.legend()
-    wp.subplot(0, 1)
+    wp.set_legend(['a', 'b', ])
+    wp.set_legend()
+    wp.set_subplot(0, 1)
     x = np.cos(np.linspace(0, 4*np.pi, 100))
     y = np.sin(np.linspace(0, 7*np.pi, 100))
     wp.plot(x, y)
 
-    wp.subplot(0, 1)
+    wp.set_subplot(0, 1)
     x = np.arange(1000)
     wp.plot(x, title='Cosine and Sine Waves')
     # wp.xlim(-1, 14)
     # wp.autoscale()
-    wp.xlabel('Cosine Wave')
-    wp.ylabel('s Wave')
+    wp.set_x_label('Cosine Wave')
+    wp.set_y_label('s Wave')
     # wp.clear()
 
     # Enable antialiasing for prettier plots

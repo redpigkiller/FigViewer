@@ -358,6 +358,27 @@ class PlotItem(pg.PlotItem):
         self.toggle_type_state = checked
         print(f"Toggle type: {'ON' if checked else 'OFF'}")
 
+    # ==================== IO Operations ====================
+    def export_curves(self):
+        data = {}
+        for i, (plot_data_item, name) in enumerate(self._legend_names):
+            x, y = plot_data_item.getData()
+            opts = plot_data_item.opts.copy()
+
+            # Deal with non-serializable objects
+            if opts.get("pen") is not None:
+                pen = opts["pen"]
+                opts["pen"] = {
+                    "color": pen.color().name(),
+                    "width": pen.width(),
+                }
+
+            assert x is not None and y is not None, "No data in the selected curve."
+
+            if not name:
+                name = f"curve_{i+1}"
+            data[name] = {"x": x.tolist(), "y": y.tolist(), "opts": opts}
+        return data
 
     def _copy_curve_to_clipboard(self, plot_data_items: list[pg.PlotDataItem]) -> None:
         for plot_data_item in plot_data_items:

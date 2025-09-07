@@ -1,10 +1,13 @@
 from typing import Literal
+from pathlib import Path
 
 import numpy as np
+from scipy.io import loadmat, savemat
 
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets
 import pyqtgraph as pg
+from pyqtgraph.exporters import ImageExporter, SVGExporter
 
 from .plot_core import PlotCore
 
@@ -76,10 +79,10 @@ class PlotWidget():
 
         # Callbacks
         # vb = self.plot_item.getViewBox()
-        self._reset_btn.clicked.connect(lambda: self._plot_core.autoscale())
-        self._auto_btn.clicked.connect(lambda: self._plot_core.autoscale())
-        self._zoom_btn.clicked.connect(lambda: self._plot_core.set_mode('zoom'))
-        self._pan_btn.clicked.connect(lambda: self._plot_core.set_mode('normal'))
+        self._reset_btn.clicked.connect(lambda: self._plot_core.auto_range())
+        self._auto_btn.clicked.connect(lambda: self._plot_core.auto_range())
+        # self._zoom_btn.clicked.connect(lambda: self._plot_core.set_mode('zoom'))
+        # self._pan_btn.clicked.connect(lambda: self._plot_core.set_mode('normal'))
         # self.save_btn.clicked.connect(self.save_image)
         # self.open_btn.clicked.connect(self.open_file)
 
@@ -92,7 +95,7 @@ class PlotWidget():
         return self._plot_widget
     
     def subplot(self, row: int, col: int, rowspan=1, colspan=1) -> None:
-        self._plot_core.subplot(row, col, rowspan, colspan)
+        self._plot_core.set_subplot(row, col, rowspan, colspan)
 
     def plot(self, *args,
         linewidth: int = 1,
@@ -151,30 +154,133 @@ class PlotWidget():
         )
         
         if title:
-            self._plot_core.title(title)
+            self._plot_core.set_title(title)
         if xlabel:
-            self._plot_core.xlabel(xlabel)
+            self._plot_core.set_x_label(xlabel)
         if ylabel:
-            self._plot_core.ylabel(ylabel)
+            self._plot_core.set_y_label(ylabel)
         if hold:
-            self._plot_core.hold('on')
+            self._plot_core.set_hold('on')
         if grid:
-            self._plot_core.grid()
+            self._plot_core.set_grid()
         if xlim:
-            self._plot_core.xlim(*xlim)
+            self._plot_core.set_x_range(*xlim)
         if ylim:
-            self._plot_core.ylim(*ylim)
+            self._plot_core.set_y_range(*ylim)
+
+    def title(self, title: str) -> None:
+        self._plot_core.set_title(title)
+    def xlim(self, xmin: float, xmax: float) -> None:
+        self._plot_core.set_x_range(xmin, xmax)
+    def ylim(self, ymin: float, ymax: float) -> None:
+        self._plot_core.set_y_range(ymin, ymax)
+    def xlabel(self, label: str) -> None:
+        self._plot_core.set_x_label(label)
+    def ylabel(self, label: str) -> None:
+        self._plot_core.set_y_label(label)
+    def hold(self, status: Literal['on', 'off']|bool = 'on') -> None:
+        self._plot_core.set_hold(status)
+    def grid(self, status: Literal['on', 'off']|bool = 'on') -> None:
+        self._plot_core.set_grid(status)
 
     def legend(self, inputs: list[str]|Literal['on', 'off'] = 'on', offset=(10, 10), **kwargs) -> None:
-        self._plot_core.legend(inputs, offset=offset, **kwargs)
+        self._plot_core.set_legend(inputs, offset=offset, **kwargs)
 
-    def save_image(self):
-        exporter = pg.exporters.ImageExporter(self.plot_item)
-        fname, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save Image", "", "PNG (*.png)")
-        if fname:
-            exporter.export(fname)
+    def save_data(self,
+             file_path: str|None = None,
+             save_format: Literal['.npy', '.npz', '.mat', '.csv', '.hdf5'] = '.npy') -> None:
+        if file_path is None:
+            fname, _ = QtWidgets.QFileDialog.getSaveFileName(self._plot_widget, "Save File", "", "Data (*.npy *.npz *.mat *.csv *.hdf5)")
+            if not fname:
+                return
+            file_path = fname
+        
+        p = Path(file_path)
+        if p.suffix.lower() != save_format.lower():
+            p = p.with_name(p.name + save_format)
 
-    def open_file(self):
+        if save_format in ('.npy', '.npz'):
+            data_dict = {}
+            for (row, col), item in self._plot_core._plot_items.items():
+                data = item.export_curves()
+                data_dict[f"plot_{row}_{col}"] = data
+            if save_format == '.npy' and len(data_dict) == 2:
+                # Save single array as .npy
+                np.save(p, next(iter(data_dict.values())))
+            else:
+                # Save multiple arrays as .npz
+                np.savez(p, **data_dict)
+
+        elif save_format == '.mat':
+            data_dict = {}
+            for (row, col), item in self._plot_core._plot_items.items():
+                for idx, curve in enumerate(item.listDataItems()):
+                    x, y = curve.getData()
+                    data_dict[f"plot_{row}_{col}_curve_{idx}_x"] = x
+                    data_dict[f"plot_{row}_{col}_curve_{idx}_y"] = y
+            savemat(p, data_dict)
+
+        elif save_format == '.csv':
+            for (row, col), item in self._plot_core._plot_items.items():
+                item.writeCsv(str(p.with_stem(f"{p.stem}_{row}_{col}")))
+
+        elif save_format == '.hdf5':
+            try:
+                import h5py
+            except ImportError:
+                raise RuntimeError("h5py is required for saving to HDF5")
+            with h5py.File(p, "w") as f:
+                for (row, col), item in self._plot_core._plot_items.items():
+                    group = f.create_group(f"plot_{row}_{col}")
+                    for curve in item.listDataItems():
+                        x, y = curve.getData()
+                        group.create_dataset("x", data=x)
+                        group.create_dataset("y", data=y)
+        else:
+            raise ValueError(f"Unsupported format: {save_format}")
+
+
+    def save_fig(self,
+             file_path: str|None = None,
+             save_format: Literal['.png', '.jpg', '.svg', '.csv', '.hdf5'] = '.png',
+             width: int|None = None,
+             height: int|None = None,
+             antialias: bool = False) -> None:
+        if file_path is None:
+            fname, _ = QtWidgets.QFileDialog.getSaveFileName(self._plot_widget, "Save File", "", "Images (*.png *.jpg *.svg);;Data (*.csv *.hdf5)")
+            if not fname:
+                return
+            file_path = fname
+        
+        p = Path(file_path)
+        if p.suffix.lower() != save_format.lower():
+            p = p.with_name(p.name + save_format)
+
+        # Choose exporter based on format
+        if save_format in ('.png', '.jpg'):
+            exporter = ImageExporter(self._plot_core.scene())
+            if width is not None:
+                exporter.params['width'] = width
+            if height is not None:
+                exporter.params['height'] = height
+            exporter.params['antialias'] = antialias
+            exporter.export(str(p))
+
+        elif save_format == '.svg':
+            exporter = SVGExporter(self._plot_core.scene())
+            exporter.export(str(p))
+        
+        else:
+            raise ValueError(f"Unsupported format: {save_format}")
+        
+        
+    def open_file(self, file_path: str|None = None) -> None:
+        if file_path is None:
+            fname, _ = QtWidgets.QFileDialog.getOpenFileName(self._plot_widget, "Open .npy File", "", "NumPy files (*.npy *.npz)")
+            if not fname:
+                return
+            file_path = fname
+
         fname, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open .npy File", "", "NumPy files (*.npy *.npz)")
         if fname:
             data = np.load(fname)
@@ -206,13 +312,3 @@ class PlotWidget():
         
         return color
     
-
-# if __name__ == "__main__":
-#     app = QtWidgets.QApplication(sys.argv)
-#     window = SinglePlotWindow()
-#     window.show()
-#     # 示範 plot
-#     x = np.linspace(0, 10, 100)
-#     y = np.sin(x)
-#     window.plot(x, y)
-#     sys.exit(app.exec_())
